@@ -268,6 +268,8 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                Uri pu = Uri.parse(url);
+                if (pu != null && "script.google.com".equals(pu.getHost())) view.evaluateJavascript(TUTUP_PITA, null);
                 if (!mainError) {
                     splash.setVisibility(View.GONE);
                     errorView.setVisibility(View.GONE);
@@ -340,6 +342,13 @@ public class MainActivity extends Activity {
             }
         });
     }
+
+    /** Menekan tombol tutup (X) pada pita pemberitahuan Google di atas halaman, sama seperti pengguna menekannya. */
+    private static final String TUTUP_PITA =
+        "(function(){var n=0;function cari(){n++;var el=null,all=document.querySelectorAll('div,section,aside');" +
+        "for(var i=0;i<all.length;i++){var t=all[i].textContent||'';if(t.length<400&&/Google Apps Script/i.test(t)){el=all[i];break;}}" +
+        "if(el){var b=null,p=el;for(var k=0;k<5&&p&&!b;k++){b=p.querySelector('[aria-label=\"Tutup\"],[aria-label=\"Close\"],[aria-label=\"Dismiss\"],[aria-label=\"Tutup pemberitahuan\"],button[aria-label],div[role=button][aria-label]');p=p.parentElement;}" +
+        "if(b){b.click();return;}}if(n<40)setTimeout(cari,250);}cari();})();";
 
     private boolean punya(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }
 
