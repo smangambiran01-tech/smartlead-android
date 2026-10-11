@@ -38,8 +38,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+
+import com.google.mlkit.vision.barcode.common.Barcode;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
 import org.json.JSONObject;
 
@@ -245,9 +251,12 @@ public class MainActivity extends Activity {
             WebViewCompat.addWebMessageListener(web, "SLAndroid", asal, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                 try {
                     JSONObject o = new JSONObject(message.getData());
-                    if ("save".equals(o.optString("t"))) simpanFile(o.optString("name", "unduhan"), o.optString("mime", "application/octet-stream"), o.optString("b64", ""));
+                    String t = o.optString("t");
+                    if ("save".equals(t)) simpanFile(o.optString("name", "unduhan"), o.optString("mime", "application/octet-stream"), o.optString("b64", ""));
+                    else if ("hello".equals(t)) balas(replyProxy, new JSONObject().put("t", "hello").put("scan", true).put("ver", BuildConfig.VERSION_NAME));
+                    else if ("scan".equals(t)) pindaiQR(replyProxy);
                 } catch (Exception e) {
-                    Toast.makeText(this, "Unduhan gagal", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Perintah aplikasi gagal", Toast.LENGTH_SHORT).show();
                 }
             });
         }
@@ -443,6 +452,33 @@ public class MainActivity extends Activity {
     }
 
     /** Menyimpan file kiriman halaman ke folder Download, lalu membukanya. */
+    private void balas(JavaScriptReplyProxy rp, JSONObject o) {
+        try { rp.postMessage(o.toString()); } catch (Exception ignored) { }
+    }
+
+    // Pemindai QR bawaan Google Play services: tidak butuh izin kamera WebView/halaman.
+    private void pindaiQR(JavaScriptReplyProxy rp) {
+        try {
+            GmsBarcodeScannerOptions opsi = new GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .enableAutoZoom()
+                    .build();
+            GmsBarcodeScanner sc = GmsBarcodeScanning.getClient(this, opsi);
+            sc.startScan()
+                    .addOnSuccessListener(b -> {
+                        try { balas(rp, new JSONObject().put("t", "scan").put("ok", true).put("data", b.getRawValue() == null ? "" : b.getRawValue())); } catch (Exception ignored) { }
+                    })
+                    .addOnCanceledListener(() -> {
+                        try { balas(rp, new JSONObject().put("t", "scan").put("ok", false).put("batal", true)); } catch (Exception ignored) { }
+                    })
+                    .addOnFailureListener(e -> {
+                        try { balas(rp, new JSONObject().put("t", "scan").put("ok", false).put("err", String.valueOf(e.getMessage()))); } catch (Exception ignored) { }
+                    });
+        } catch (Exception e) {
+            try { balas(rp, new JSONObject().put("t", "scan").put("ok", false).put("err", String.valueOf(e.getMessage()))); } catch (Exception ignored) { }
+        }
+    }
+
     private void simpanFile(String name, String mime, String b64) {
         try {
             String safe = name.replaceAll("[\\\\/:*?\"<>|]", "_");
