@@ -1,0 +1,87 @@
+name: Buat APK SMART LEAD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths-ignore: [ '**.md' ]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ambil kode
+        uses: actions/checkout@v4
+
+      - name: Rapikan letak folder
+        run: |
+          if [ ! -f settings.gradle ] && [ -f SmartLeadAndroid/settings.gradle ]; then
+            shopt -s dotglob; mv SmartLeadAndroid/* . ; fi
+          ls -la
+
+      - name: Siapkan Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Siapkan Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Siapkan kunci tanda tangan
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/smartlead.jks"
+            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          else
+            PASS="sl-$(openssl rand -hex 12)"
+            keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/smartlead.jks" -storetype PKCS12 -alias smartlead \
+              -keyalg RSA -keysize 2048 -validity 10000 -storepass "$PASS" -keypass "$PASS" \
+              -dname "CN=SMART LEAD, O=SMAN 1 Gambiran, L=Banyuwangi, C=ID"
+            echo "KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=smartlead" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "::warning::Secrets belum diisi, memakai kunci sementara."
+          fi
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/smartlead.jks" >> "$GITHUB_ENV"
+
+      - name: Bangun APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Beri nama file
+        run: |
+          VER=$(grep '^SMARTLEAD_VERSION=' gradle.properties | cut -d= -f2 | tr -d '\r ')
+          mkdir -p hasil
+          cp app/build/outputs/apk/release/app-release.apk "hasil/SMART_LEAD_v${VER}.${{ github.run_number }}.apk"
+          echo "APK_FILE=hasil/SMART_LEAD_v${VER}.${{ github.run_number }}.apk" >> "$GITHUB_ENV"
+          echo "APK_TAG=v${VER}.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Simpan APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SMART_LEAD-APK
+          path: hasil/*.apk
+
+      - name: Terbitkan di Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.APK_TAG }}
+          name: SMART LEAD ${{ env.APK_TAG }}
+          body: |
+            Aplikasi Android SMART LEAD SMAN 1 Gambiran.
+            Unduh file .apk di bawah, buka di HP Android, izinkan "Instal aplikasi tidak dikenal", lalu Pasang.
+          files: ${{ env.APK_FILE }}
