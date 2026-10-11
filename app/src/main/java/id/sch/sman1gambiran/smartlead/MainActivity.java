@@ -1,0 +1,494 @@
+package id.sch.sman1gambiran.smartlead;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.webkit.CookieManager;
+import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.core.content.FileProvider;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * SMART LEAD – aplikasi Android pembungkus Web App Google Apps Script.
+ * - Kamera (scan QR), lokasi (presensi), pilih/ambil foto, dan unduhan file berfungsi di dalam aplikasi.
+ * - Hanya halaman Google Apps Script yang dibuka di dalam aplikasi; tautan lain (WhatsApp, Maps, Drive)
+ *   dibuka dengan aplikasi masing-masing.
+ */
+public class MainActivity extends Activity {
+
+    private static final int REQ_CAMERA = 11, REQ_LOCATION = 12, REQ_CAMERA_FOR_FILE = 13, REQ_FILE = 21;
+
+    private WebView web;
+    private View splash, errorView;
+    private ProgressBar bar;
+    private TextView errorText;
+    private boolean firstLoad = true, mainError = false;
+    private long lastBack = 0;
+
+    private PermissionRequest pendingMedia;
+    private GeolocationPermissions.Callback pendingGeoCb;
+    private String pendingGeoOrigin;
+    private ValueCallback<Uri[]> fileCallback;
+    private WebChromeClient.FileChooserParams pendingFileParams;
+    private Uri cameraOutput;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor("#F2F5F4"));
+
+        web = new WebView(this);
+        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4));
+        bp.gravity = Gravity.TOP;
+        root.addView(bar, bp);
+
+        splash = buildSplash();
+        root.addView(splash, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        errorView = buildError();
+        errorView.setVisibility(View.GONE);
+        root.addView(errorView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+
+        setupWebView();
+        if (state != null) web.restoreState(state);
+        if (state == null || web.getUrl() == null) loadApp();
+    }
+
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+    private View buildSplash() {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setGravity(Gravity.CENTER);
+        l.setBackgroundColor(Color.parseColor("#0B5C4F"));
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.logo);
+        l.addView(logo, new LinearLayout.LayoutParams(dp(96), dp(96)));
+        TextView t = new TextView(this);
+        t.setText("SMART LEAD");
+        t.setTextColor(Color.WHITE);
+        t.setTextSize(24);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setPadding(0, dp(16), 0, dp(4));
+        l.addView(t);
+        TextView s = new TextView(this);
+        s.setText("SMAN 1 Gambiran · memuat…");
+        s.setTextColor(Color.parseColor("#CFE3DD"));
+        s.setTextSize(14);
+        l.addView(s);
+        ProgressBar p = new ProgressBar(this);
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        pp.topMargin = dp(22);
+        l.addView(p, pp);
+        return l;
+    }
+
+    private View buildError() {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setGravity(Gravity.CENTER);
+        l.setPadding(dp(28), dp(28), dp(28), dp(28));
+        l.setBackgroundColor(Color.parseColor("#0B5C4F"));
+        TextView h = new TextView(this);
+        h.setText("Tidak bisa membuka SMART LEAD");
+        h.setTextColor(Color.WHITE);
+        h.setTextSize(20);
+        h.setTypeface(Typeface.DEFAULT_BOLD);
+        h.setGravity(Gravity.CENTER);
+        l.addView(h);
+        errorText = new TextView(this);
+        errorText.setTextColor(Color.parseColor("#CFE3DD"));
+        errorText.setTextSize(15);
+        errorText.setGravity(Gravity.CENTER);
+        errorText.setPadding(0, dp(12), 0, dp(20));
+        l.addView(errorText);
+        Button b = new Button(this);
+        b.setText("Coba lagi");
+        b.setOnClickListener(v -> loadApp());
+        l.addView(b);
+        return l;
+    }
+
+    private boolean online() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            NetworkInfo n = cm != null ? cm.getActiveNetworkInfo() : null;
+            return n != null && n.isConnected();
+        } catch (Exception e) { return true; }
+    }
+
+    private void loadApp() {
+        String url = BuildConfig.APP_URL;
+        if (url == null || !url.startsWith("https://")) { showError("Alamat aplikasi belum diatur. Isi SMARTLEAD_URL di file gradle.properties lalu buat ulang APK."); return; }
+        if (!online()) { showError("Tidak ada koneksi internet. Nyalakan data seluler atau Wi-Fi sekolah, lalu coba lagi."); return; }
+        mainError = false;
+        errorView.setVisibility(View.GONE);
+        web.loadUrl(url);
+    }
+
+    private void showError(String msg) {
+        errorText.setText(msg);
+        errorView.setVisibility(View.VISIBLE);
+        splash.setVisibility(View.GONE);
+    }
+
+    /** Domain yang boleh dibuka di dalam aplikasi. */
+    private static boolean dalamAplikasi(Uri u) {
+        if (u == null || u.getHost() == null) return false;
+        String h = u.getHost().toLowerCase();
+        return h.equals("script.google.com") || h.endsWith(".googleusercontent.com") || h.equals("script.googleusercontent.com")
+                || h.equals("accounts.google.com") || h.endsWith(".gstatic.com") || h.equals("www.google.com") && u.getPath() != null && u.getPath().startsWith("/recaptcha");
+    }
+
+    private static boolean asalTepercaya(Uri u) {
+        if (u == null || u.getHost() == null || !"https".equals(u.getScheme())) return false;
+        String h = u.getHost().toLowerCase();
+        return h.equals("script.google.com") || h.endsWith(".googleusercontent.com");
+    }
+
+    private void bukaLuar(Uri u) {
+        try {
+            Intent i;
+            if ("intent".equals(u.getScheme())) {
+                i = Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME);
+            } else {
+                i = new Intent(Intent.ACTION_VIEW, u);
+            }
+            i.addCategory(Intent.CATEGORY_BROWSABLE);
+            startActivity(i);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Tidak ada aplikasi untuk membuka tautan ini", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Tautan tidak bisa dibuka", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @SuppressWarnings("SetJavaScriptEnabled")
+    private void setupWebView() {
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setGeolocationEnabled(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(true);
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
+        s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setSupportMultipleWindows(false);
+        s.setJavaScriptCanOpenWindowsAutomatically(false);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        s.setUserAgentString(s.getUserAgentString() + " SmartLeadAndroid/" + BuildConfig.VERSION_NAME);
+
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(web, true);
+
+        // Jembatan unduhan: halaman SMART LEAD mengirim file (CSV/Excel) sebagai base64.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            Set<String> asal = new HashSet<>();
+            asal.add("https://script.google.com");
+            asal.add("https://*.googleusercontent.com");
+            WebViewCompat.addWebMessageListener(web, "SLAndroid", asal, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                try {
+                    JSONObject o = new JSONObject(message.getData());
+                    if ("save".equals(o.optString("t"))) simpanFile(o.optString("name", "unduhan"), o.optString("mime", "application/octet-stream"), o.optString("b64", ""));
+                } catch (Exception e) {
+                    Toast.makeText(this, "Unduhan gagal", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        web.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
+            Uri u = Uri.parse(url);
+            if ("https".equals(u.getScheme())) bukaLuar(u);
+            else Toast.makeText(this, "Gunakan tombol unduh di aplikasi", Toast.LENGTH_SHORT).show();
+        });
+
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
+                Uri u = req.getUrl();
+                String sc = u.getScheme() == null ? "" : u.getScheme();
+                if (!req.isForMainFrame() && ("https".equals(sc) || "about".equals(sc) || "blob".equals(sc) || "data".equals(sc))) return false;
+                if ("https".equals(sc) && dalamAplikasi(u)) return false;
+                bukaLuar(u);
+                return true;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (!mainError) {
+                    splash.setVisibility(View.GONE);
+                    errorView.setVisibility(View.GONE);
+                }
+                firstLoad = false;
+                CookieManager.getInstance().flush();
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
+                if (req.isForMainFrame()) {
+                    mainError = true;
+                    showError(online() ? "Server Google tidak menjawab (" + err.getDescription() + "). Coba lagi sebentar." : "Tidak ada koneksi internet. Nyalakan data seluler atau Wi-Fi sekolah, lalu coba lagi.");
+                }
+            }
+        });
+
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int p) {
+                bar.setProgress(p);
+                bar.setVisibility(p >= 100 ? View.GONE : View.VISIBLE);
+            }
+
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    if (!asalTepercaya(request.getOrigin())) { request.deny(); return; }
+                    boolean wantsVideo = false;
+                    for (String r : request.getResources()) if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) wantsVideo = true;
+                    if (!wantsVideo) { request.deny(); return; }
+                    if (punya(Manifest.permission.CAMERA)) {
+                        request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                    } else {
+                        if (pendingMedia != null) pendingMedia.deny();
+                        pendingMedia = request;
+                        requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
+                    }
+                });
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {
+                if (pendingMedia == request) pendingMedia = null;
+            }
+
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                if (!asalTepercaya(Uri.parse(origin))) { callback.invoke(origin, false, false); return; }
+                if (punya(Manifest.permission.ACCESS_FINE_LOCATION) || punya(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                    callback.invoke(origin, true, false);
+                } else {
+                    pendingGeoOrigin = origin;
+                    pendingGeoCb = callback;
+                    requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
+                }
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (fileCallback != null) fileCallback.onReceiveValue(null);
+                fileCallback = callback;
+                pendingFileParams = params;
+                if (terimaGambar(params) && !punya(Manifest.permission.CAMERA)) {
+                    requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA_FOR_FILE);
+                } else {
+                    bukaPemilihFile(params);
+                }
+                return true;
+            }
+        });
+    }
+
+    private boolean punya(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }
+
+    private static boolean terimaGambar(WebChromeClient.FileChooserParams p) {
+        String[] acc = p.getAcceptTypes();
+        if (acc == null || acc.length == 0) return true;
+        for (String a : acc) if (a == null || a.isEmpty() || a.startsWith("image") || a.equals("*/*")) return true;
+        return false;
+    }
+
+    private void bukaPemilihFile(WebChromeClient.FileChooserParams params) {
+        List<Intent> extra = new ArrayList<>();
+        cameraOutput = null;
+        if (terimaGambar(params) && punya(Manifest.permission.CAMERA)) {
+            try {
+                File dir = new File(getCacheDir(), "foto");
+                if (!dir.exists()) dir.mkdirs();
+                File f = new File(dir, "qr_" + System.currentTimeMillis() + ".jpg");
+                cameraOutput = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+                Intent cam = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                cam.putExtra(MediaStore.EXTRA_OUTPUT, cameraOutput);
+                cam.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                extra.add(cam);
+            } catch (Exception ignored) { cameraOutput = null; }
+        }
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        String[] acc = params.getAcceptTypes();
+        String type = (acc != null && acc.length == 1 && acc[0] != null && !acc[0].isEmpty() && !acc[0].startsWith(".")) ? acc[0] : "*/*";
+        pick.setType(type);
+        if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+
+        Intent chosen;
+        if (params.isCaptureEnabled() && !extra.isEmpty()) {
+            chosen = extra.get(0); // input capture: langsung buka kamera
+        } else {
+            chosen = Intent.createChooser(pick, "Pilih file");
+            if (!extra.isEmpty()) chosen.putExtra(Intent.EXTRA_INITIAL_INTENTS, extra.toArray(new Intent[0]));
+        }
+        try {
+            startActivityForResult(chosen, REQ_FILE);
+        } catch (Exception e) {
+            if (fileCallback != null) fileCallback.onReceiveValue(null);
+            fileCallback = null;
+            Toast.makeText(this, "Kamera / pemilih file tidak tersedia", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_FILE || fileCallback == null) return;
+        Uri[] res = null;
+        if (resultCode == RESULT_OK) {
+            if (data != null && (data.getData() != null || data.getClipData() != null)) {
+                if (data.getClipData() != null) {
+                    int n = data.getClipData().getItemCount();
+                    res = new Uri[n];
+                    for (int i = 0; i < n; i++) res[i] = data.getClipData().getItemAt(i).getUri();
+                } else {
+                    res = new Uri[]{data.getData()};
+                }
+            } else if (cameraOutput != null) {
+                res = new Uri[]{cameraOutput};
+            }
+        }
+        fileCallback.onReceiveValue(res);
+        fileCallback = null;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        boolean ok = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
+        if (requestCode == REQ_CAMERA && pendingMedia != null) {
+            if (ok) pendingMedia.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+            else { pendingMedia.deny(); Toast.makeText(this, "Izin kamera ditolak. Aktifkan di Pengaturan > Aplikasi > SMART LEAD > Izin.", Toast.LENGTH_LONG).show(); }
+            pendingMedia = null;
+        } else if (requestCode == REQ_LOCATION && pendingGeoCb != null) {
+            boolean any = false;
+            for (int r : results) if (r == PackageManager.PERMISSION_GRANTED) any = true;
+            pendingGeoCb.invoke(pendingGeoOrigin, any, false);
+            if (!any) Toast.makeText(this, "Izin lokasi ditolak. Presensi membutuhkan lokasi.", Toast.LENGTH_LONG).show();
+            pendingGeoCb = null;
+            pendingGeoOrigin = null;
+        } else if (requestCode == REQ_CAMERA_FOR_FILE && pendingFileParams != null) {
+            bukaPemilihFile(pendingFileParams);
+        }
+    }
+
+    /** Menyimpan file kiriman halaman ke folder Download, lalu membukanya. */
+    private void simpanFile(String name, String mime, String b64) {
+        try {
+            String safe = name.replaceAll("[\\\\/:*?\"<>|]", "_");
+            if (safe.isEmpty()) safe = "unduhan";
+            byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+            Uri uri;
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Downloads.DISPLAY_NAME, safe);
+                v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/SMART LEAD");
+                uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) throw new Exception("insert");
+                try (OutputStream os = getContentResolver().openOutputStream(uri)) { if (os == null) throw new Exception("stream"); os.write(bytes); }
+            } else {
+                File dir = new File(getExternalFilesDir(null), "Download");
+                if (!dir.exists()) dir.mkdirs();
+                File f = new File(dir, safe);
+                try (FileOutputStream os = new FileOutputStream(f)) { os.write(bytes); }
+                uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+            }
+            Toast.makeText(this, "Tersimpan di Download/SMART LEAD: " + safe, Toast.LENGTH_LONG).show();
+            try {
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, mime);
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(i, "Buka " + safe));
+            } catch (Exception ignored) { }
+        } catch (Exception e) {
+            Toast.makeText(this, "Gagal menyimpan file", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (errorView.getVisibility() == View.VISIBLE) { super.onBackPressed(); return; }
+        if (web.canGoBack()) { web.goBack(); return; }
+        long now = System.currentTimeMillis();
+        if (now - lastBack < 2000) { super.onBackPressed(); return; }
+        lastBack = now;
+        Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        web.saveState(out);
+    }
+
+    @Override
+    protected void onResume() { super.onResume(); web.onResume(); }
+
+    @Override
+    protected void onPause() { web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
+
+    @Override
+    protected void onDestroy() {
+        if (web != null) { web.stopLoading(); web.destroy(); }
+        super.onDestroy();
+    }
+}

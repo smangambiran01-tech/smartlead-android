@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SmartLead" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/hijau</item>
+        <item name="android:colorPrimaryDark">@color/hijau_tua</item>
+        <item name="android:colorAccent">@color/hijau</item>
+        <item name="android:statusBarColor">@color/hijau_tua</item>
+        <item name="android:navigationBarColor">@color/latar</item>
+        <item name="android:windowBackground">@color/hijau</item>
+    </style>
+</resources>
