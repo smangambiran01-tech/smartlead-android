@@ -229,6 +229,9 @@ public class MainActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setUserAgentString(s.getUserAgentString() + " SmartLeadAndroid/" + BuildConfig.VERSION_NAME);
+        // Matikan saran isi-otomatis (username/sandi tersimpan) agar akun orang lain tidak muncul di HP bersama.
+        s.setSaveFormData(false);
+        if (Build.VERSION.SDK_INT >= 26) web.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
