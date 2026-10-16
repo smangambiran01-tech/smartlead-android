@@ -57,6 +57,17 @@ jobs:
           fi
           echo "KEYSTORE_FILE=$RUNNER_TEMP/smartlead.jks" >> "$GITHUB_ENV"
 
+      - name: Siapkan Firebase (notifikasi)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Firebase aktif: notifikasi akan berfungsi."
+          else
+            echo "::warning::Secret GOOGLE_SERVICES_JSON belum diisi. APK tetap dibuat, tetapi tanpa notifikasi."
+          fi
+
       - name: Bangun APK
         env:
           VERSION_CODE: ${{ github.run_number }}
