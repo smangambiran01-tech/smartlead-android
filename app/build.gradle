@@ -2,8 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
+// Notifikasi Firebase aktif bila file app/google-services.json (dari Firebase Console) sudah diunggah.
+def adaFirebase = file('google-services.json').exists()
+if (adaFirebase) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
 def appUrl = (project.findProperty('SMARTLEAD_URL') ?: '').toString().trim()
 def appName = (project.findProperty('SMARTLEAD_NAME') ?: 'SMART LEAD').toString().trim()
+def updateRepo = (project.findProperty('SMARTLEAD_UPDATE_REPO') ?: '').toString().trim()
 def appVer = (project.findProperty('SMARTLEAD_VERSION') ?: '1.0').toString().trim()
 def verCode = (System.getenv('VERSION_CODE') ?: '1').toInteger()
 def ksFile = System.getenv('KEYSTORE_FILE')
@@ -19,6 +26,8 @@ android {
         versionCode verCode
         versionName appVer
         buildConfigField 'String', 'APP_URL', '"' + appUrl + '"'
+        buildConfigField 'boolean', 'PUSH', adaFirebase ? 'true' : 'false'
+        buildConfigField 'String', 'UPDATE_REPO', '"' + updateRepo + '"'
         resValue 'string', 'app_name', appName
     }
 
@@ -59,4 +68,6 @@ dependencies {
     implementation 'androidx.core:core:1.13.1'
     implementation 'androidx.webkit:webkit:1.11.0'
     implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+    implementation platform('com.google.firebase:firebase-bom:33.4.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }

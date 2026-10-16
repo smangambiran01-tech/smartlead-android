@@ -2,6 +2,7 @@ package id.sch.sman1gambiran.smartlead;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -42,6 +43,8 @@ import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.mlkit.vision.barcode.common.Barcode;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
@@ -49,7 +52,11 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -65,7 +72,9 @@ import java.util.Set;
  */
 public class MainActivity extends Activity {
 
-    private static final int REQ_CAMERA = 11, REQ_LOCATION = 12, REQ_CAMERA_FOR_FILE = 13, REQ_FILE = 21;
+    private static final int REQ_CAMERA = 11, REQ_LOCATION = 12, REQ_CAMERA_FOR_FILE = 13, REQ_FILE = 21, REQ_NOTIF = 31;
+    private String pendingHalaman = null; // halaman yang dibuka dari notifikasi
+    private JavaScriptReplyProxy lastProxy = null, pushProxy = null;
 
     private WebView web;
     private View splash, errorView;
@@ -84,6 +93,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        pendingHalaman = getIntent() != null ? getIntent().getStringExtra("halaman") : null;
+        PushService.siapkanChannel(this);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#F2F5F4"));
 
@@ -178,6 +189,7 @@ public class MainActivity extends Activity {
         mainError = false;
         errorView.setVisibility(View.GONE);
         web.loadUrl(url);
+        cekPembaruan(false);
     }
 
     private void showError(String msg) {
@@ -198,6 +210,53 @@ public class MainActivity extends Activity {
         if (u == null || u.getHost() == null || !"https".equals(u.getScheme())) return false;
         String h = u.getHost().toLowerCase();
         return h.equals("script.google.com") || h.endsWith(".googleusercontent.com");
+    }
+
+    /* ---------- Pembaruan aplikasi: cek rilis terbaru di GitHub ---------- */
+    private void cekPembaruan(boolean paksa) {
+        final String repo = BuildConfig.UPDATE_REPO;
+        if (repo == null || repo.isEmpty()) return;
+        final android.content.SharedPreferences sp = getSharedPreferences("sl", MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        if (!paksa && now - sp.getLong("cek_update", 0) < 3L * 3600 * 1000) return; // paling sering tiap 3 jam
+        sp.edit().putLong("cek_update", now).apply();
+        new Thread(() -> {
+            HttpURLConnection c = null;
+            try {
+                c = (HttpURLConnection) new URL("https://api.github.com/repos/" + repo + "/releases/latest").openConnection();
+                c.setConnectTimeout(8000); c.setReadTimeout(8000);
+                c.setRequestProperty("Accept", "application/vnd.github+json");
+                c.setRequestProperty("User-Agent", "SmartLeadAndroid");
+                if (c.getResponseCode() != 200) return;
+                StringBuilder sb = new StringBuilder();
+                BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
+                String line; while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+                JSONObject j = new JSONObject(sb.toString());
+                final String tag = j.optString("tag_name", "");            // contoh: v1.2.41 (angka terakhir = nomor build)
+                int build = 0;
+                try { build = Integer.parseInt(tag.substring(tag.lastIndexOf('.') + 1)); } catch (Exception ignored) { }
+                if (build <= BuildConfig.VERSION_CODE) return;
+                if (tag.equals(sp.getString("lewati_tag", "")) && System.currentTimeMillis() - sp.getLong("lewati_waktu", 0) < 24L * 3600 * 1000) return;
+                String apk = null;
+                org.json.JSONArray as = j.optJSONArray("assets");
+                for (int i = 0; as != null && i < as.length(); i++) { JSONObject a = as.optJSONObject(i); if (a != null && a.optString("name", "").endsWith(".apk")) { apk = a.optString("browser_download_url", ""); break; } }
+                final String link = apk != null && !apk.isEmpty() ? apk : j.optString("html_url", "");
+                if (link.isEmpty()) return;
+                runOnUiThread(() -> tawarkanPembaruan(tag, link, sp));
+            } catch (Exception ignored) {
+            } finally { if (c != null) c.disconnect(); }
+        }).start();
+    }
+    private void tawarkanPembaruan(String tag, String link, android.content.SharedPreferences sp) {
+        if (isFinishing()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Versi baru SMART LEAD")
+                .setMessage("Tersedia " + tag + " (terpasang v" + BuildConfig.VERSION_NAME + "." + BuildConfig.VERSION_CODE + ").\n\nKetuk Perbarui, tunggu unduhan selesai, lalu buka file APK dan pilih Pasang/Update. Data dan akun tidak hilang.")
+                .setPositiveButton("Perbarui", (d, w) -> bukaLuar(Uri.parse(link)))
+                .setNegativeButton("Nanti", (d, w) -> sp.edit().putString("lewati_tag", tag).putLong("lewati_waktu", System.currentTimeMillis()).apply())
+                .setCancelable(true)
+                .show();
     }
 
     private void bukaLuar(Uri u) {
@@ -253,7 +312,14 @@ public class MainActivity extends Activity {
                     JSONObject o = new JSONObject(message.getData());
                     String t = o.optString("t");
                     if ("save".equals(t)) simpanFile(o.optString("name", "unduhan"), o.optString("mime", "application/octet-stream"), o.optString("b64", ""));
-                    else if ("hello".equals(t)) balas(replyProxy, new JSONObject().put("t", "hello").put("scan", true).put("ver", BuildConfig.VERSION_NAME));
+                    else if ("hello".equals(t)) {
+                        lastProxy = replyProxy;
+                        JSONObject h = new JSONObject().put("t", "hello").put("scan", true).put("push", pushSiap()).put("ver", BuildConfig.VERSION_NAME + "." + BuildConfig.VERSION_CODE);
+                        if (pendingHalaman != null) { h.put("halaman", pendingHalaman); pendingHalaman = null; }
+                        balas(replyProxy, h);
+                    }
+                    else if ("push".equals(t)) mintaPush(replyProxy);
+                    else if ("update".equals(t)) cekPembaruan(true);
                     else if ("scan".equals(t)) pindaiQR(replyProxy);
                 } catch (Exception e) {
                     Toast.makeText(this, "Perintah aplikasi gagal", Toast.LENGTH_SHORT).show();
@@ -448,7 +514,50 @@ public class MainActivity extends Activity {
             pendingGeoOrigin = null;
         } else if (requestCode == REQ_CAMERA_FOR_FILE && pendingFileParams != null) {
             bukaPemilihFile(pendingFileParams);
+        } else if (requestCode == REQ_NOTIF) {
+            ambilTokenPush();
         }
+    }
+
+    /* ---------- Notifikasi (Firebase Cloud Messaging) ---------- */
+    private boolean pushSiap() {
+        if (!BuildConfig.PUSH) return false;
+        try { return !FirebaseApp.getApps(this).isEmpty(); } catch (Exception e) { return false; }
+    }
+    private boolean notifBoleh() {
+        return Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+    /** Halaman meminta token: minta izin notifikasi (Android 13+), lalu kirim token ke halaman untuk didaftarkan di server. */
+    private void mintaPush(JavaScriptReplyProxy rp) {
+        pushProxy = rp;
+        if (!pushSiap()) return;
+        if (!notifBoleh()) { requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF); return; }
+        ambilTokenPush();
+    }
+    private void ambilTokenPush() {
+        if (pushProxy == null || !pushSiap()) return;
+        final JavaScriptReplyProxy rp = pushProxy;
+        try {
+            FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+                try {
+                    String tok = task.isSuccessful() && task.getResult() != null ? task.getResult() : "";
+                    if (!tok.isEmpty()) getSharedPreferences("sl", MODE_PRIVATE).edit().putString("fcm", tok).apply();
+                    balas(rp, new JSONObject().put("t", "push").put("token", tok).put("izin", notifBoleh()));
+                } catch (Exception ignored) { }
+            });
+        } catch (Exception ignored) { }
+    }
+
+    /** Notifikasi diketuk saat aplikasi sudah terbuka: minta halaman pindah ke menu terkait. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String h = intent != null ? intent.getStringExtra("halaman") : null;
+        if (h == null || h.isEmpty()) return;
+        boolean terkirim = false;
+        if (lastProxy != null) { try { lastProxy.postMessage(new JSONObject().put("t", "buka").put("halaman", h).toString()); terkirim = true; } catch (Exception ignored) { } }
+        if (!terkirim) pendingHalaman = h;
     }
 
     /** Menyimpan file kiriman halaman ke folder Download, lalu membukanya. */
