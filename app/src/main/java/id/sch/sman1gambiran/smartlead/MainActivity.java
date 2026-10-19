@@ -286,8 +286,9 @@ public class MainActivity extends Activity {
         s.setGeolocationEnabled(true);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(true);
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
+        // Tampilan selalu pas selebar layar (tidak bisa ter-zoom / bergeser ke samping)
+        s.setLoadWithOverviewMode(false);
+        s.setUseWideViewPort(false);
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setSupportMultipleWindows(false);
@@ -296,7 +297,7 @@ public class MainActivity extends Activity {
         s.setUserAgentString(s.getUserAgentString() + " SmartLeadAndroid/" + BuildConfig.VERSION_NAME);
         // Matikan saran isi-otomatis (username/sandi tersimpan) agar akun orang lain tidak muncul di HP bersama.
         s.setSaveFormData(false);
-        s.setTextZoom(100);
+        s.setTextZoom(100); // ukuran huruf tetap pas walau setelan huruf HP diperbesar
         if (Build.VERSION.SDK_INT >= 26) web.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
 
         CookieManager cm = CookieManager.getInstance();
@@ -354,6 +355,8 @@ public class MainActivity extends Activity {
                     errorView.setVisibility(View.GONE);
                 }
                 firstLoad = false;
+                view.getSettings().setTextZoom(100);
+                for (int i = 0; i < 10 && view.zoomOut(); i++) { /* kembalikan ke skala 100% */ }
                 CookieManager.getInstance().flush();
             }
 
