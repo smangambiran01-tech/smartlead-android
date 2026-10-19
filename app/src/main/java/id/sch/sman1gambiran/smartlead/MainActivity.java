@@ -99,6 +99,12 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.parseColor("#F2F5F4"));
 
         web = new WebView(this);
+        // Kunci geser ke samping: halaman selalu menempel di kiri, selebar layar
+        web.setHorizontalScrollBarEnabled(false);
+        web.setOnScrollChangeListener(new View.OnScrollChangeListener() {
+            @Override
+            public void onScrollChange(View v, int x, int y, int ox, int oy) { if (x != 0) v.scrollTo(0, y); }
+        });
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -349,7 +355,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 Uri pu = Uri.parse(url);
-                if (pu != null && "script.google.com".equals(pu.getHost())) view.evaluateJavascript(TUTUP_PITA, null);
+                if (pu != null && "script.google.com".equals(pu.getHost())) { view.evaluateJavascript(PAS_LAYAR, null); view.evaluateJavascript(TUTUP_PITA, null); }
                 if (!mainError) {
                     splash.setVisibility(View.GONE);
                     errorView.setVisibility(View.GONE);
@@ -426,6 +432,13 @@ public class MainActivity extends Activity {
     }
 
     /** Menekan tombol tutup (X) pada pita pemberitahuan Google di atas halaman, sama seperti pengguna menekannya. */
+    /** Halaman pembungkus Google dibuat pas selebar layar (tidak bisa digeser/zoom). */
+    private static final String PAS_LAYAR =
+        "(function(){try{var d=document,m=d.querySelector('meta[name=viewport]');if(!m){m=d.createElement('meta');m.name='viewport';d.head.appendChild(m);}" +
+        "m.content='width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no';" +
+        "var s=d.createElement('style');s.textContent='html,body{max-width:100%!important;overflow-x:hidden!important;margin:0!important}iframe{max-width:100vw!important}';" +
+        "d.head.appendChild(s);window.scrollTo(0,window.scrollY);}catch(e){}})();";
+
     private static final String TUTUP_PITA =
         "(function(){var n=0;function cari(){n++;var el=null,all=document.querySelectorAll('div,section,aside');" +
         "for(var i=0;i<all.length;i++){var t=all[i].textContent||'';if(t.length<400&&/Google Apps Script/i.test(t)){el=all[i];break;}}" +
