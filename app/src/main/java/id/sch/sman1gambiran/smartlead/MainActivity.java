@@ -296,6 +296,7 @@ public class MainActivity extends Activity {
         s.setUserAgentString(s.getUserAgentString() + " SmartLeadAndroid/" + BuildConfig.VERSION_NAME);
         // Matikan saran isi-otomatis (username/sandi tersimpan) agar akun orang lain tidak muncul di HP bersama.
         s.setSaveFormData(false);
+        s.setTextZoom(100);
         if (Build.VERSION.SDK_INT >= 26) web.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
 
         CookieManager cm = CookieManager.getInstance();
