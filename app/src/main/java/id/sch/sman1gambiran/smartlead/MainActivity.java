@@ -208,6 +208,8 @@ public class MainActivity extends Activity {
     private static boolean dalamAplikasi(Uri u) {
         if (u == null || u.getHost() == null) return false;
         String h = u.getHost().toLowerCase();
+        Uri au = Uri.parse(BuildConfig.APP_URL);
+        if (au != null && au.getHost() != null && h.equals(au.getHost().toLowerCase())) return true; // server sekolah (VPS)
         return h.equals("script.google.com") || h.endsWith(".googleusercontent.com") || h.equals("script.googleusercontent.com")
                 || h.equals("accounts.google.com") || h.endsWith(".gstatic.com") || h.equals("www.google.com") && u.getPath() != null && u.getPath().startsWith("/recaptcha");
     }
@@ -215,6 +217,8 @@ public class MainActivity extends Activity {
     private static boolean asalTepercaya(Uri u) {
         if (u == null || u.getHost() == null || !"https".equals(u.getScheme())) return false;
         String h = u.getHost().toLowerCase();
+        Uri au = Uri.parse(BuildConfig.APP_URL);
+        if (au != null && au.getHost() != null && h.equals(au.getHost().toLowerCase())) return true; // server sekolah (VPS)
         return h.equals("script.google.com") || h.endsWith(".googleusercontent.com");
     }
 
@@ -313,6 +317,8 @@ public class MainActivity extends Activity {
         // Jembatan unduhan: halaman SMART LEAD mengirim file (CSV/Excel) sebagai base64.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             Set<String> asal = new HashSet<>();
+            Uri au = Uri.parse(BuildConfig.APP_URL);
+            if (au != null && au.getHost() != null) asal.add("https://" + au.getHost()); // server sekolah (VPS)
             asal.add("https://script.google.com");
             asal.add("https://*.googleusercontent.com");
             WebViewCompat.addWebMessageListener(web, "SLAndroid", asal, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
