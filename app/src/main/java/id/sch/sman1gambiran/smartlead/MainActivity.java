@@ -81,6 +81,11 @@ public class MainActivity extends Activity {
     private ProgressBar bar;
     private TextView errorText;
     private boolean firstLoad = true, mainError = false;
+    /** Alamat cadangan bila alamat utama (SMARTLEAD_URL) tidak bisa dibuka, mis. DNS domain sekolah gangguan.
+     *  Server yang sama (VPS sekolah), hanya nama alamatnya berbeda. Boleh ditambah. */
+    private static final String[] CADANGAN = { "https://smartlead.103-193-177-175.sslip.io/" };
+    private String urlAktif = null;      // alamat yang sedang dipakai
+    private int cobaKe = 0;              // 0 = utama, 1.. = cadangan ke-n
     private long lastBack = 0;
 
     private PermissionRequest pendingMedia;
@@ -194,8 +199,52 @@ public class MainActivity extends Activity {
         if (!online()) { showError("Tidak ada koneksi internet. Nyalakan data seluler atau Wi-Fi sekolah, lalu coba lagi."); return; }
         mainError = false;
         errorView.setVisibility(View.GONE);
-        web.loadUrl(url);
         cekPembaruan(false);
+        // Periksa dulu alamat utama; bila tidak menjawab sebagai SMART LEAD, pakai alamat cadangan.
+        new Thread(() -> {
+            String[] semua = new String[CADANGAN.length + 1];
+            semua[0] = url; System.arraycopy(CADANGAN, 0, semua, 1, CADANGAN.length);
+            int pilih = -1;
+            for (int i = 0; i < semua.length && pilih < 0; i++) if (sehat(semua[i])) pilih = i;
+            final int p = pilih < 0 ? 0 : pilih; // tidak ada yang menjawab: coba utama, pesan galat tampil seperti biasa
+            runOnUiThread(() -> bukaAlamat(p, semua[p]));
+        }).start();
+    }
+
+    private void bukaAlamat(int ke, String url) {
+        cobaKe = ke; urlAktif = url; mainError = false;
+        errorView.setVisibility(View.GONE);
+        if (ke > 0) Toast.makeText(this, "Alamat utama sedang gangguan. Memakai alamat cadangan.", Toast.LENGTH_LONG).show();
+        web.loadUrl(url);
+    }
+
+    /** true bila alamat menjawab /sehat milik server SMART LEAD. */
+    private static boolean sehat(String base) {
+        HttpURLConnection c = null;
+        try {
+            String b = base.endsWith("/") ? base : base + "/";
+            c = (HttpURLConnection) new URL(b + "sehat").openConnection();
+            c.setConnectTimeout(5000); c.setReadTimeout(5000);
+            c.setRequestProperty("User-Agent", "SmartLeadAndroid");
+            if (c.getResponseCode() != 200) return false;
+            StringBuilder sb = new StringBuilder();
+            BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
+            String line; while ((line = br.readLine()) != null && sb.length() < 2000) sb.append(line);
+            br.close();
+            JSONObject j = new JSONObject(sb.toString());
+            return j.optBoolean("ok") && j.has("versi");
+        } catch (Exception e) { return false; }
+        finally { if (c != null) try { c.disconnect(); } catch (Exception ignored) { } }
+    }
+
+    /** Host milik SMART LEAD: alamat utama + semua alamat cadangan. */
+    private static boolean hostSekolah(String h) {
+        if (h == null) return false;
+        h = h.toLowerCase();
+        Uri au = Uri.parse(BuildConfig.APP_URL);
+        if (au != null && au.getHost() != null && h.equals(au.getHost().toLowerCase())) return true;
+        for (String c : CADANGAN) { Uri cu = Uri.parse(c); if (cu != null && cu.getHost() != null && h.equals(cu.getHost().toLowerCase())) return true; }
+        return false;
     }
 
     private void showError(String msg) {
@@ -208,8 +257,7 @@ public class MainActivity extends Activity {
     private static boolean dalamAplikasi(Uri u) {
         if (u == null || u.getHost() == null) return false;
         String h = u.getHost().toLowerCase();
-        Uri au = Uri.parse(BuildConfig.APP_URL);
-        if (au != null && au.getHost() != null && h.equals(au.getHost().toLowerCase())) return true; // server sekolah (VPS)
+        if (hostSekolah(h)) return true; // server sekolah (VPS), alamat utama & cadangan
         return h.equals("script.google.com") || h.endsWith(".googleusercontent.com") || h.equals("script.googleusercontent.com")
                 || h.equals("accounts.google.com") || h.endsWith(".gstatic.com") || h.equals("www.google.com") && u.getPath() != null && u.getPath().startsWith("/recaptcha");
     }
@@ -217,8 +265,7 @@ public class MainActivity extends Activity {
     private static boolean asalTepercaya(Uri u) {
         if (u == null || u.getHost() == null || !"https".equals(u.getScheme())) return false;
         String h = u.getHost().toLowerCase();
-        Uri au = Uri.parse(BuildConfig.APP_URL);
-        if (au != null && au.getHost() != null && h.equals(au.getHost().toLowerCase())) return true; // server sekolah (VPS)
+        if (hostSekolah(h)) return true; // server sekolah (VPS), alamat utama & cadangan
         return h.equals("script.google.com") || h.endsWith(".googleusercontent.com");
     }
 
@@ -319,6 +366,7 @@ public class MainActivity extends Activity {
             Set<String> asal = new HashSet<>();
             Uri au = Uri.parse(BuildConfig.APP_URL);
             if (au != null && au.getHost() != null) asal.add("https://" + au.getHost()); // server sekolah (VPS)
+            for (String c : CADANGAN) { Uri cu = Uri.parse(c); if (cu != null && cu.getHost() != null) asal.add("https://" + cu.getHost()); }
             asal.add("https://script.google.com");
             asal.add("https://*.googleusercontent.com");
             WebViewCompat.addWebMessageListener(web, "SLAndroid", asal, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
@@ -375,8 +423,14 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                 if (req.isForMainFrame()) {
+                    // alamat utama gagal di tengah jalan: coba alamat cadangan berikutnya
+                    if (online() && cobaKe < CADANGAN.length && (urlAktif == null || hostSekolah(req.getUrl().getHost()))) {
+                        final int n = cobaKe + 1;
+                        view.post(() -> bukaAlamat(n, CADANGAN[n - 1]));
+                        return;
+                    }
                     mainError = true;
-                    showError(online() ? "Server Google tidak menjawab (" + err.getDescription() + "). Coba lagi sebentar." : "Tidak ada koneksi internet. Nyalakan data seluler atau Wi-Fi sekolah, lalu coba lagi.");
+                    showError(online() ? "Server SMART LEAD tidak menjawab (" + err.getDescription() + "). Coba lagi sebentar." : "Tidak ada koneksi internet. Nyalakan data seluler atau Wi-Fi sekolah, lalu coba lagi.");
                 }
             }
         });
